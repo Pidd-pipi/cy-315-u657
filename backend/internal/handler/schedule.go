@@ -3,12 +3,14 @@ package handler
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/gbschedule/gbschedule/internal/constants"
 	"github.com/gbschedule/gbschedule/internal/dto"
 	"github.com/gbschedule/gbschedule/internal/service"
 )
@@ -48,12 +50,14 @@ func (h *ScheduleHandler) Generate(c *gin.Context) {
 
 // List godoc
 // @Summary List timetable entries
+// @Description Query the latest published timetable by default; pass version_id to read a historical version.
 // @Tags schedules
 // @Produce json
 // @Param week query int false "week"
 // @Param class_id query int false "class id"
 // @Param teacher_id query int false "teacher id"
 // @Param classroom_id query int false "classroom id"
+// @Param version_id query int false "schedule version id (defaults to the latest published version)"
 // @Success 200 {object} dto.Response
 // @Router /api/v1/schedules [get]
 func (h *ScheduleHandler) List(c *gin.Context) {
@@ -62,7 +66,12 @@ func (h *ScheduleHandler) List(c *gin.Context) {
 		BadRequest(c, err.Error())
 		return
 	}
-	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID)
+	versionID, err := parseOptionalUintQuery(c, "version_id")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID, versionID)
 	if err != nil {
 		Error(c, err)
 		return
@@ -174,11 +183,13 @@ func (h *ScheduleHandler) Adjustments(c *gin.Context) {
 
 // Export godoc
 // @Summary Export a timetable as JSON or CSV
+// @Description Export the latest published timetable by default; pass version_id to export a historical version.
 // @Tags schedules
 // @Produce json
 // @Param type query string true "class|teacher|classroom"
 // @Param id query int true "entity id"
 // @Param week query int false "week"
+// @Param version_id query int false "schedule version id"
 // @Param format query string false "json|csv"
 // @Success 200 {object} dto.Response
 // @Router /api/v1/schedules/export [get]
@@ -194,6 +205,11 @@ func (h *ScheduleHandler) Export(c *gin.Context) {
 		w := exportReq.Week
 		week = &w
 	}
+	versionID, err := parseOptionalUintQuery(c, "version_id")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
 	var classID, teacherID, classroomID *uint
 	switch exportReq.Type {
 	case "class":
@@ -206,7 +222,7 @@ func (h *ScheduleHandler) Export(c *gin.Context) {
 		id := exportReq.ID
 		classroomID = &id
 	}
-	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID)
+	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID, versionID)
 	if err != nil {
 		Error(c, err)
 		return
@@ -216,6 +232,148 @@ func (h *ScheduleHandler) Export(c *gin.Context) {
 		return
 	}
 	OK(c, items)
+}
+
+// Draft godoc
+// @Summary View the unpublished draft timetable
+// @Tags schedules
+// @Produce json
+// @Param week query int false "week"
+// @Success 200 {object} dto.Response
+// @Router /api/v1/schedules/draft [get]
+func (h *ScheduleHandler) Draft(c *gin.Context) {
+	week, err := parseOptionalUintQuery(c, "week")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.service.GetDraft(c.Request.Context(), week)
+	if err != nil {
+		Error(c, err)
+		return
+	}
+	OK(c, result)
+}
+
+// Publish godoc
+// @Summary Publish the draft timetable
+// @Description Promote draft entries (all weeks by default, or the given weeks) into the live timetable. When the draft contains conflicts the response is 409 with a conflict list.
+// @Tags schedules
+// @Accept json
+// @Produce json
+// @Param input body dto.PublishScheduleRequest false "publish options"
+// @Success 200 {object} dto.Response
+// @Failure 409 {object} dto.Response
+// @Router /api/v1/schedules/publish [post]
+func (h *ScheduleHandler) Publish(c *gin.Context) {
+	var req dto.PublishScheduleRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			BadRequest(c, err.Error())
+			return
+		}
+	}
+	result, err := h.service.Publish(c.Request.Context(), &req)
+	if err != nil {
+		var conflictErr *service.ConflictListError
+		if errors.As(err, &conflictErr) {
+			c.JSON(http.StatusConflict, dto.Response{
+				Code:    constants.CodeConflict,
+				Message: err.Error(),
+				Data:    gin.H{"conflicts": conflictErr.Conflicts},
+			})
+			return
+		}
+		if errors.Is(err, service.ErrNoDraft) {
+			BadRequest(c, "no draft schedule to publish")
+			return
+		}
+		Error(c, err)
+		return
+	}
+	OK(c, result)
+}
+
+// Versions godoc
+// @Summary List published timetable versions
+// @Tags schedules
+// @Produce json
+// @Param page query int false "page"
+// @Param page_size query int false "page size"
+// @Success 200 {object} dto.Response
+// @Router /api/v1/schedules/versions [get]
+func (h *ScheduleHandler) Versions(c *gin.Context) {
+	var p dto.Pagination
+	if err := c.ShouldBindQuery(&p); err != nil {
+		BadRequest(c, "invalid pagination")
+		return
+	}
+	p.Normalize()
+	items, total, err := h.service.ListVersions(c.Request.Context(), p.Page, p.PageSize)
+	if err != nil {
+		Error(c, err)
+		return
+	}
+	OK(c, dto.PageData{Items: items, Total: total, Page: p.Page, PageSize: p.PageSize})
+}
+
+// Version godoc
+// @Summary Get one published timetable version
+// @Tags schedules
+// @Produce json
+// @Param id path int true "version id"
+// @Success 200 {object} dto.Response
+// @Router /api/v1/schedules/versions/{id} [get]
+func (h *ScheduleHandler) Version(c *gin.Context) {
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
+	item, err := h.service.GetVersion(c.Request.Context(), id)
+	if err != nil {
+		Error(c, err)
+		return
+	}
+	OK(c, item)
+}
+
+// VersionEntries godoc
+// @Summary List timetable entries of one published version
+// @Tags schedules
+// @Produce json
+// @Param id path int true "version id"
+// @Param week query int false "week"
+// @Success 200 {object} dto.Response
+// @Router /api/v1/schedules/versions/{id}/entries [get]
+func (h *ScheduleHandler) VersionEntries(c *gin.Context) {
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
+	week, err := parseOptionalUintQuery(c, "week")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	items, err := h.service.ListVersionEntries(c.Request.Context(), id, week)
+	if err != nil {
+		Error(c, err)
+		return
+	}
+	OK(c, items)
+}
+
+func parseOptionalUintQuery(c *gin.Context, key string) (*uint, error) {
+	v := c.Query(key)
+	if v == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || n == 0 {
+		return nil, service.ErrInvalid
+	}
+	x := uint(n)
+	return &x, nil
 }
 
 func parseScheduleFilters(c *gin.Context) (*uint, *uint, *uint, *uint, error) {

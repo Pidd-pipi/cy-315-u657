@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/gbschedule/gbschedule/internal/constants"
 	"github.com/gbschedule/gbschedule/internal/dto"
@@ -17,11 +18,16 @@ import (
 // ScheduleService exposes scheduling, conflict detection, adjustment and statistics operations.
 type ScheduleService interface {
 	Generate(ctx context.Context, req *dto.GenerateScheduleRequest) (*dto.GenerateScheduleResponse, error)
-	List(ctx context.Context, week, classID, teacherID, classroomID *uint) ([]dto.ScheduleResponse, error)
+	List(ctx context.Context, week, classID, teacherID, classroomID, versionID *uint) ([]dto.ScheduleResponse, error)
 	Get(ctx context.Context, id uint) (*dto.ScheduleResponse, error)
 	CheckConflicts(ctx context.Context) ([]dto.ConflictResponse, error)
 	Swap(ctx context.Context, req *dto.SwapScheduleRequest) (*dto.AdjustmentResponse, error)
 	Move(ctx context.Context, req *dto.MoveScheduleRequest) (*dto.AdjustmentResponse, error)
+	GetDraft(ctx context.Context, week *uint) (*dto.DraftScheduleResponse, error)
+	Publish(ctx context.Context, req *dto.PublishScheduleRequest) (*dto.PublishScheduleResponse, error)
+	ListVersions(ctx context.Context, page, pageSize int) ([]dto.ScheduleVersionResponse, int64, error)
+	GetVersion(ctx context.Context, id uint) (*dto.ScheduleVersionResponse, error)
+	ListVersionEntries(ctx context.Context, id uint, week *uint) ([]dto.ScheduleResponse, error)
 	ListAdjustments(ctx context.Context, page, pageSize int) ([]dto.AdjustmentLogResponse, int64, error)
 	ClassroomUtilization(ctx context.Context) ([]dto.ClassroomUtilizationItem, error)
 	TeacherWorkload(ctx context.Context) ([]dto.TeacherWorkloadItem, error)
@@ -30,6 +36,8 @@ type ScheduleService interface {
 
 type scheduleService struct {
 	schedules   repository.ScheduleRepository
+	drafts      repository.DraftScheduleRepository
+	versions    repository.ScheduleVersionRepository
 	classrooms  repository.ClassroomRepository
 	teachers    repository.TeacherRepository
 	classes     repository.ClassRepository
@@ -42,6 +50,8 @@ type scheduleService struct {
 // NewScheduleService constructs a schedule service.
 func NewScheduleService(
 	schedules repository.ScheduleRepository,
+	drafts repository.DraftScheduleRepository,
+	versions repository.ScheduleVersionRepository,
 	classrooms repository.ClassroomRepository,
 	teachers repository.TeacherRepository,
 	classes repository.ClassRepository,
@@ -52,6 +62,8 @@ func NewScheduleService(
 ) ScheduleService {
 	return &scheduleService{
 		schedules:   schedules,
+		drafts:      drafts,
+		versions:    versions,
 		classrooms:  classrooms,
 		teachers:    teachers,
 		classes:     classes,
@@ -97,7 +109,7 @@ func (s *scheduleService) Generate(ctx context.Context, req *dto.GenerateSchedul
 
 	teacherCursor := 0
 	var allSchedules []model.Schedule
-	var conflicts []dto.ConflictResponse
+	conflicts := make([]dto.ConflictResponse, 0)
 	required := 0
 
 	for week := 1; week <= req.Weeks; week++ {
@@ -148,19 +160,20 @@ func (s *scheduleService) Generate(ctx context.Context, req *dto.GenerateSchedul
 		}
 	}
 
-	// Regenerate the full timetable for the requested semester so stale
-	// weeks from a previous longer run are not left behind.
-	if err := s.schedules.DeleteAll(ctx); err != nil {
-		return nil, fmt.Errorf("clear old schedules: %w", err)
+	// Regenerate writes to the draft table so an accidental click cannot
+	// overwrite the live timetable; publishing the draft is an explicit step.
+	draftEntries := make([]model.DraftSchedule, 0, len(allSchedules))
+	for _, item := range allSchedules {
+		draftEntries = append(draftEntries, draftScheduleFromLive(item, 0))
 	}
-	if err := s.schedules.CreateBatch(ctx, allSchedules); err != nil {
-		return nil, fmt.Errorf("persist schedules: %w", err)
+	if err := s.drafts.DeleteAll(ctx); err != nil {
+		return nil, fmt.Errorf("clear old draft schedules: %w", err)
+	}
+	if err := s.drafts.CreateBatch(ctx, draftEntries); err != nil {
+		return nil, fmt.Errorf("persist draft schedules: %w", err)
 	}
 
-	generatedConflicts, err := s.CheckConflicts(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("check generated conflicts: %w", err)
-	}
+	generatedConflicts := s.detectConflicts(ctx, allSchedules)
 
 	responses, err := s.enrichSchedules(ctx, allSchedules)
 	if err != nil {
@@ -175,7 +188,18 @@ func (s *scheduleService) Generate(ctx context.Context, req *dto.GenerateSchedul
 	return resp, nil
 }
 
-func (s *scheduleService) List(ctx context.Context, week, classID, teacherID, classroomID *uint) ([]dto.ScheduleResponse, error) {
+func (s *scheduleService) List(ctx context.Context, week, classID, teacherID, classroomID, versionID *uint) ([]dto.ScheduleResponse, error) {
+	if versionID != nil {
+		entries, err := s.versions.ListEntries(ctx, *versionID, week)
+		if err != nil {
+			return nil, fmt.Errorf("list version entries: %w", err)
+		}
+		items := versionEntriesToSchedules(entries)
+		if classID != nil || teacherID != nil || classroomID != nil {
+			items = filterSchedules(items, classID, teacherID, classroomID)
+		}
+		return s.enrichSchedules(ctx, items)
+	}
 	filter := repository.ScheduleFilter{Week: week, ClassID: classID, TeacherID: teacherID, ClassroomID: classroomID}
 	items, err := s.schedules.List(ctx, filter)
 	if err != nil {
@@ -210,74 +234,281 @@ func (s *scheduleService) CheckConflicts(ctx context.Context) ([]dto.ConflictRes
 	return s.detectConflicts(ctx, items), nil
 }
 
+// ensureDraft returns the draft entries, seeding them from the live timetable
+// when no draft exists yet. Swap/move never mutate the live timetable directly.
+func (s *scheduleService) ensureDraft(ctx context.Context) ([]model.DraftSchedule, error) {
+	items, err := s.drafts.List(ctx, repository.DraftScheduleFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list draft schedules: %w", err)
+	}
+	if len(items) > 0 {
+		return items, nil
+	}
+	live, err := s.schedules.List(ctx, repository.ScheduleFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list live schedules: %w", err)
+	}
+	drafts := make([]model.DraftSchedule, 0, len(live))
+	for _, item := range live {
+		drafts = append(drafts, draftScheduleFromLive(item, item.ID))
+	}
+	if err := s.drafts.CreateBatch(ctx, drafts); err != nil {
+		return nil, fmt.Errorf("seed draft schedules: %w", err)
+	}
+	return drafts, nil
+}
+
+func (s *scheduleService) findDraftByRef(drafts []model.DraftSchedule, ref uint) (int, bool) {
+	for i := range drafts {
+		if drafts[i].ID == ref || drafts[i].SourceScheduleID == ref {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func (s *scheduleService) Swap(ctx context.Context, req *dto.SwapScheduleRequest) (*dto.AdjustmentResponse, error) {
-	a, err := s.schedules.GetByID(ctx, req.ScheduleAID)
+	drafts, err := s.ensureDraft(ctx)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("get schedule a: %w", err)
+		return nil, err
 	}
-	b, err := s.schedules.GetByID(ctx, req.ScheduleBID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("get schedule b: %w", err)
+	ai, ok := s.findDraftByRef(drafts, req.ScheduleAID)
+	if !ok {
+		return nil, ErrNotFound
 	}
+	bi, ok := s.findDraftByRef(drafts, req.ScheduleBID)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	a, b := &drafts[ai], &drafts[bi]
 	a.Week, b.Week = b.Week, a.Week
 	a.DayOfWeek, b.DayOfWeek = b.DayOfWeek, a.DayOfWeek
 	a.TimeSlotID, b.TimeSlotID = b.TimeSlotID, a.TimeSlotID
 	a.ClassroomID, b.ClassroomID = b.ClassroomID, a.ClassroomID
-	if err := s.schedules.Update(ctx, a); err != nil {
-		return nil, fmt.Errorf("update schedule a: %w", err)
+	if err := s.drafts.Update(ctx, a); err != nil {
+		return nil, fmt.Errorf("update draft schedule a: %w", err)
 	}
-	if err := s.schedules.Update(ctx, b); err != nil {
-		return nil, fmt.Errorf("update schedule b: %w", err)
+	if err := s.drafts.Update(ctx, b); err != nil {
+		return nil, fmt.Errorf("update draft schedule b: %w", err)
 	}
-	logID, err := s.recordAdjustment(ctx, req.ScheduleAID, constants.ActionSwap, map[string]any{"schedule_a_id": req.ScheduleAID, "schedule_b_id": req.ScheduleBID})
+	logID, err := s.recordAdjustment(ctx, a.ID, constants.ActionSwap, map[string]any{"schedule_a_id": req.ScheduleAID, "schedule_b_id": req.ScheduleBID})
 	if err != nil {
 		return nil, err
 	}
-	responses, err := s.enrichSchedules(ctx, []model.Schedule{*a})
-	if err != nil {
-		return nil, err
-	}
-	conflicts, err := s.CheckConflicts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &dto.AdjustmentResponse{Schedule: responses[0], Conflicts: conflicts, LogID: logID}, nil
+	return s.adjustmentResult(ctx, a, logID)
 }
 
 func (s *scheduleService) Move(ctx context.Context, req *dto.MoveScheduleRequest) (*dto.AdjustmentResponse, error) {
-	item, err := s.schedules.GetByID(ctx, req.ScheduleID)
+	drafts, err := s.ensureDraft(ctx)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("get schedule: %w", err)
+		return nil, err
 	}
+	idx, ok := s.findDraftByRef(drafts, req.ScheduleID)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	item := &drafts[idx]
 	item.Week = req.Week
 	item.DayOfWeek = req.DayOfWeek
 	item.TimeSlotID = req.TimeSlotID
 	item.ClassroomID = req.ClassroomID
-	if err := s.schedules.Update(ctx, item); err != nil {
-		return nil, fmt.Errorf("update schedule: %w", err)
+	if err := s.drafts.Update(ctx, item); err != nil {
+		return nil, fmt.Errorf("update draft schedule: %w", err)
 	}
-	logID, err := s.recordAdjustment(ctx, req.ScheduleID, constants.ActionMove, map[string]any{"week": req.Week, "day_of_week": req.DayOfWeek, "time_slot_id": req.TimeSlotID, "classroom_id": req.ClassroomID})
+	logID, err := s.recordAdjustment(ctx, item.ID, constants.ActionMove, map[string]any{"week": req.Week, "day_of_week": req.DayOfWeek, "time_slot_id": req.TimeSlotID, "classroom_id": req.ClassroomID})
 	if err != nil {
 		return nil, err
 	}
-	responses, err := s.enrichSchedules(ctx, []model.Schedule{*item})
+	return s.adjustmentResult(ctx, item, logID)
+}
+
+func (s *scheduleService) adjustmentResult(ctx context.Context, item *model.DraftSchedule, logID uint) (*dto.AdjustmentResponse, error) {
+	live := draftToSchedule(*item)
+	responses, err := s.enrichSchedules(ctx, []model.Schedule{live})
 	if err != nil {
 		return nil, err
 	}
-	conflicts, err := s.CheckConflicts(ctx)
+	drafts, err := s.drafts.List(ctx, repository.DraftScheduleFilter{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list draft schedules for conflict check: %w", err)
 	}
+	conflicts := s.detectConflicts(ctx, draftsToSchedules(drafts))
 	return &dto.AdjustmentResponse{Schedule: responses[0], Conflicts: conflicts, LogID: logID}, nil
+}
+
+// GetDraft returns the unpublished draft timetable, optionally filtered by week.
+func (s *scheduleService) GetDraft(ctx context.Context, week *uint) (*dto.DraftScheduleResponse, error) {
+	items, err := s.drafts.List(ctx, repository.DraftScheduleFilter{Week: week})
+	if err != nil {
+		return nil, fmt.Errorf("list draft schedules: %w", err)
+	}
+	if len(items) == 0 {
+		return &dto.DraftScheduleResponse{Exists: false, Total: 0, Weeks: []uint{}, Schedules: []dto.ScheduleResponse{}, Conflicts: []dto.ConflictResponse{}}, nil
+	}
+	schedules := draftsToSchedules(items)
+	responses, err := s.enrichSchedules(ctx, schedules)
+	if err != nil {
+		return nil, fmt.Errorf("enrich draft schedules: %w", err)
+	}
+	conflicts := s.detectConflicts(ctx, schedules)
+	return &dto.DraftScheduleResponse{
+		Exists:    true,
+		Total:     len(items),
+		Weeks:     distinctWeeks(schedules),
+		Schedules: responses,
+		Conflicts: conflicts,
+	}, nil
+}
+
+// Publish validates the draft for the requested weeks and atomically promotes
+// it into the live timetable, archiving the previous live timetable first.
+func (s *scheduleService) Publish(ctx context.Context, req *dto.PublishScheduleRequest) (*dto.PublishScheduleResponse, error) {
+	weeks, err := s.resolvePublishWeeks(ctx, req.Weeks)
+	if err != nil {
+		return nil, err
+	}
+	drafts, err := s.drafts.List(ctx, repository.DraftScheduleFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list draft schedules: %w", err)
+	}
+	if len(drafts) == 0 {
+		return nil, ErrNoDraft
+	}
+
+	// Only conflicts within the published weeks block promotion; unrelated
+	// draft weeks are out of scope for this publish.
+	allConflicts := s.detectConflicts(ctx, draftsToSchedules(drafts))
+	conflicts := filterConflictsByWeeks(allConflicts, weeks)
+	if len(conflicts) > 0 {
+		return nil, &ConflictListError{Conflicts: conflicts}
+	}
+
+	version, err := s.versions.Publish(ctx, weeks, time.Now(), req.Note)
+	if err != nil {
+		if errors.Is(err, repository.ErrNoDraft) {
+			return nil, ErrNoDraft
+		}
+		return nil, fmt.Errorf("publish draft: %w", err)
+	}
+
+	filterWeek := uint(0)
+	if len(weeks) == 1 {
+		filterWeek = weeks[0]
+	}
+	entries, err := s.versions.ListEntries(ctx, version.ID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("load published version: %w", err)
+	}
+	liveItems := versionEntriesToSchedules(entries)
+	if filterWeek > 0 {
+		filtered := make([]model.Schedule, 0)
+		for _, item := range liveItems {
+			if item.Week == filterWeek {
+				filtered = append(filtered, item)
+			}
+		}
+		liveItems = filtered
+	}
+	responses, err := s.enrichSchedules(ctx, liveItems)
+	if err != nil {
+		return nil, fmt.Errorf("enrich published schedules: %w", err)
+	}
+
+	publishedCount := 0
+	weekSet := make(map[uint]bool, len(weeks))
+	for _, w := range weeks {
+		weekSet[w] = true
+	}
+	for _, d := range drafts {
+		if weekSet[d.Week] {
+			publishedCount++
+		}
+	}
+
+	if _, err := s.recordAdjustment(ctx, 0, constants.ActionPublish, map[string]any{
+		"version_id":      version.ID,
+		"version":         version.Version,
+		"weeks":           weeks,
+		"published_count": publishedCount,
+	}); err != nil {
+		return nil, err
+	}
+
+	return &dto.PublishScheduleResponse{
+		VersionID:      version.ID,
+		Version:        version.Version,
+		PublishedWeeks: weeks,
+		PublishedCount: publishedCount,
+		LiveCount:      len(entries),
+		PublishedAt:    version.PublishedAt.Format("2006-01-02 15:04:05"),
+		Schedules:      responses,
+	}, nil
+}
+
+func (s *scheduleService) resolvePublishWeeks(ctx context.Context, requested []uint) ([]uint, error) {
+	all, err := s.drafts.List(ctx, repository.DraftScheduleFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list draft weeks: %w", err)
+	}
+	draftWeeks := distinctWeeks(draftsToSchedules(all))
+	if len(requested) == 0 {
+		return draftWeeks, nil
+	}
+	available := map[uint]bool{}
+	for _, w := range draftWeeks {
+		available[w] = true
+	}
+	seen := map[uint]bool{}
+	weeks := make([]uint, 0, len(requested))
+	for _, w := range requested {
+		if !available[w] {
+			return nil, fmt.Errorf("publish schedule: %w: no draft entries for week %d", ErrInvalid, w)
+		}
+		if !seen[w] {
+			seen[w] = true
+			weeks = append(weeks, w)
+		}
+	}
+	sort.Slice(weeks, func(i, j int) bool { return weeks[i] < weeks[j] })
+	return weeks, nil
+}
+
+func (s *scheduleService) ListVersions(ctx context.Context, page, pageSize int) ([]dto.ScheduleVersionResponse, int64, error) {
+	items, total, err := s.versions.List(ctx, page, pageSize)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list schedule versions: %w", err)
+	}
+	out := make([]dto.ScheduleVersionResponse, 0, len(items))
+	for i := range items {
+		out = append(out, versionResponse(items[i]))
+	}
+	return out, total, nil
+}
+
+func (s *scheduleService) GetVersion(ctx context.Context, id uint) (*dto.ScheduleVersionResponse, error) {
+	item, err := s.versions.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get schedule version: %w", err)
+	}
+	resp := versionResponse(*item)
+	return &resp, nil
+}
+
+func (s *scheduleService) ListVersionEntries(ctx context.Context, id uint, week *uint) ([]dto.ScheduleResponse, error) {
+	if _, err := s.versions.GetByID(ctx, id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get schedule version: %w", err)
+	}
+	entries, err := s.versions.ListEntries(ctx, id, week)
+	if err != nil {
+		return nil, fmt.Errorf("list version entries: %w", err)
+	}
+	return s.enrichSchedules(ctx, versionEntriesToSchedules(entries))
 }
 
 func (s *scheduleService) ListAdjustments(ctx context.Context, page, pageSize int) ([]dto.AdjustmentLogResponse, int64, error) {
@@ -424,7 +655,7 @@ func (s *scheduleService) enrichSchedules(ctx context.Context, items []model.Sch
 }
 
 func (s *scheduleService) detectConflicts(ctx context.Context, items []model.Schedule) []dto.ConflictResponse {
-	var conflicts []dto.ConflictResponse
+	conflicts := make([]dto.ConflictResponse, 0)
 	teacherSlots := map[string]model.Schedule{}
 	classSlots := map[string]model.Schedule{}
 	classroomSlots := map[string]model.Schedule{}

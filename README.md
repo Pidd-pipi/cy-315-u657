@@ -6,9 +6,12 @@
 
 - **基础数据管理**：教室、教师、班级、课程、时间段的完整 CRUD API。
 - **智能排课算法**：根据学期周数、每周天数、每天节数和课程周课时要求生成课表，避开教师/班级/教室时间冲突，优先满足连排需求。
+- **待发布草稿**：智能排课、换课、移动均先写入待发布草稿，不会直接改动正式课表，避免值班老师误触影响全校安排。
+- **草稿发布与冲突拦截**：发布前校验草稿，存在冲突时返回 409 与冲突清单，正式课表保持不变；发布成功后草稿才成为正式安排。
+- **课表版本历史**：每次发布会把旧正式课表归档为历史版本，形成完整版本记录；查询与导出默认读取最新正式版本，也可按版本回看历史。
 - **冲突检测与报告**：检测教师时间冲突、班级时间冲突、教室时间冲突、教室容量冲突和教师偏好冲突，并给出解决建议。
-- **课表查询与导出**：按班级、教师、教室查询课表，支持 JSON / CSV 导出，支持按周次查看。
-- **调课与手动调整**：支持交换两节课、移动单节课到空闲时段，自动重新检测冲突并记录调课历史。
+- **课表查询与导出**：按班级、教师、教室查询课表，支持 JSON / CSV 导出，支持按周次查看，支持按历史版本查询/导出。
+- **调课与手动调整**：支持交换两节课、移动单节课到空闲时段（先落入草稿），自动重新检测冲突并记录调课历史。
 - **统计与利用率分析**：教室利用率、教师工作量、课程分布热力图数据。
 
 ## API 文档
@@ -57,16 +60,33 @@ go run ./cmd/server
 | GET/PUT/DELETE | `/api/v1/courses/:id` | 课程详情 / 更新 / 删除 |
 | GET/POST | `/api/v1/time-slots` | 时间段列表 / 新建时间段 |
 | GET/PUT/DELETE | `/api/v1/time-slots/:id` | 时间段详情 / 更新 / 删除 |
-| POST | `/api/v1/schedules/generate` | 智能排课 |
-| GET | `/api/v1/schedules` | 课表查询 |
-| GET | `/api/v1/schedules/conflicts` | 冲突检测 |
-| POST | `/api/v1/schedules/swap` | 交换两节课 |
-| POST | `/api/v1/schedules/move` | 移动单节课 |
+| POST | `/api/v1/schedules/generate` | 智能排课（结果写入待发布草稿） |
+| GET | `/api/v1/schedules` | 课表查询（默认最新正式版本，支持 `week` / `version_id`） |
+| GET | `/api/v1/schedules/conflicts` | 正式课表冲突检测 |
+| GET | `/api/v1/schedules/draft` | 查看待发布草稿（支持 `week` 按周筛选） |
+| POST | `/api/v1/schedules/publish` | 发布草稿（请求体可传 `weeks` 按周发布；冲突时返回 409 与冲突清单） |
+| GET | `/api/v1/schedules/versions` | 正式课表版本历史 |
+| GET | `/api/v1/schedules/versions/:id` | 版本详情 |
+| GET | `/api/v1/schedules/versions/:id/entries` | 版本课表明细（支持 `week`） |
+| POST | `/api/v1/schedules/swap` | 交换两节课（先写入草稿） |
+| POST | `/api/v1/schedules/move` | 移动单节课（先写入草稿） |
 | GET | `/api/v1/schedules/adjustments` | 调课历史 |
-| GET | `/api/v1/schedules/export` | 课表导出（JSON/CSV） |
+| GET | `/api/v1/schedules/export` | 课表导出（JSON/CSV，默认最新正式版本，支持 `version_id`） |
 | GET | `/api/v1/statistics/classrooms` | 教室利用率 |
 | GET | `/api/v1/statistics/teachers` | 教师工作量 |
 | GET | `/api/v1/statistics/density` | 课程分布热力图 |
+
+### 草稿与发布流程
+
+为避免误触"生成排课"直接覆盖全校正式课表，排课变更采用草稿 + 显式发布两段式：
+
+1. `POST /api/v1/schedules/generate` 生成课表、`POST /api/v1/schedules/swap` 换课、`POST /api/v1/schedules/move` 移动，都只改待发布草稿，正式课表保持原样可查。
+2. `GET /api/v1/schedules/draft?week=1` 查看草稿（含按周筛选与当前冲突列表）。
+3. `POST /api/v1/schedules/publish` 发布草稿：请求体 `{"weeks":[1,2],"note":"第1-2周调整"}`，不传 `weeks` 表示发布草稿全部周次。草稿存在冲突时返回 HTTP 409，`data.conflicts` 为冲突清单，正式课表不变。
+4. 发布成功后草稿成为正式安排，旧正式安排归档到版本历史（`GET /api/v1/schedules/versions`，明细 `/api/v1/schedules/versions/:id/entries`）。
+5. `GET /api/v1/schedules` 与 `/api/v1/schedules/export` 默认读最新正式版本；传 `version_id` 可查询/导出历史版本。
+
+> 首次换课/移动时若尚无草稿，系统会自动以当前正式课表初始化草稿，再在草稿上应用调整。
 
 统一响应格式：
 

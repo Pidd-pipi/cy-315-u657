@@ -177,6 +177,16 @@ definitions:
     - time_slot_id
     - week
     type: object
+  github_com_gbschedule_gbschedule_internal_dto.PublishScheduleRequest:
+    properties:
+      note:
+        maxLength: 256
+        type: string
+      weeks:
+        items:
+          type: integer
+        type: array
+    type: object
   github_com_gbschedule_gbschedule_internal_dto.Response:
     properties:
       code:
@@ -584,6 +594,8 @@ paths:
       - courses
   /api/v1/schedules:
     get:
+      description: Query the latest published timetable by default; pass version_id
+        to read a historical version.
       parameters:
       - description: week
         in: query
@@ -600,6 +612,10 @@ paths:
       - description: classroom id
         in: query
         name: classroom_id
+        type: integer
+      - description: schedule version id (defaults to the latest published version)
+        in: query
+        name: version_id
         type: integer
       produces:
       - application/json
@@ -662,8 +678,27 @@ paths:
       summary: Detect conflicts in the current timetable
       tags:
       - schedules
+  /api/v1/schedules/draft:
+    get:
+      parameters:
+      - description: week
+        in: query
+        name: week
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+      summary: View the unpublished draft timetable
+      tags:
+      - schedules
   /api/v1/schedules/export:
     get:
+      description: Export the latest published timetable by default; pass version_id
+        to export a historical version.
       parameters:
       - description: class|teacher|classroom
         in: query
@@ -678,6 +713,10 @@ paths:
       - description: week
         in: query
         name: week
+        type: integer
+      - description: schedule version id
+        in: query
+        name: version_id
         type: integer
       - description: json|csv
         in: query
@@ -735,6 +774,33 @@ paths:
       summary: Move a timetable entry to a free slot
       tags:
       - schedules
+  /api/v1/schedules/publish:
+    post:
+      consumes:
+      - application/json
+      description: Promote draft entries (all weeks by default, or the given weeks)
+        into the live timetable. When the draft contains conflicts the response is
+        409 with a conflict list.
+      parameters:
+      - description: publish options
+        in: body
+        name: input
+        schema:
+          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.PublishScheduleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+      summary: Publish the draft timetable
+      tags:
+      - schedules
   /api/v1/schedules/swap:
     post:
       consumes:
@@ -754,6 +820,67 @@ paths:
           schema:
             $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
       summary: Swap two timetable entries
+      tags:
+      - schedules
+  /api/v1/schedules/versions:
+    get:
+      parameters:
+      - description: page
+        in: query
+        name: page
+        type: integer
+      - description: page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+      summary: List published timetable versions
+      tags:
+      - schedules
+  /api/v1/schedules/versions/{id}:
+    get:
+      parameters:
+      - description: version id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+      summary: Get one published timetable version
+      tags:
+      - schedules
+  /api/v1/schedules/versions/{id}/entries:
+    get:
+      parameters:
+      - description: version id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: week
+        in: query
+        name: week
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+      summary: List timetable entries of one published version
       tags:
       - schedules
   /api/v1/statistics/classrooms:

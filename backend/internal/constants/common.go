@@ -9,6 +9,13 @@ const (
 
 // Adjustment action names.
 const (
-	ActionSwap = "swap"
-	ActionMove = "move"
+	ActionSwap    = "swap"
+	ActionMove    = "move"
+	ActionPublish = "publish"
+)
+
+// Schedule version lifecycle statuses.
+const (
+	VersionCurrent  = "current"
+	VersionArchived = "archived"
 )

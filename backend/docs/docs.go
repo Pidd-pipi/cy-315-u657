@@ -485,6 +485,7 @@ const docTemplate = `{
         },
         "/api/v1/schedules": {
             "get": {
+                "description": "Query the latest published timetable by default; pass version_id to read a historical version.",
                 "produces": [
                     "application/json"
                 ],
@@ -515,6 +516,12 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "classroom id",
                         "name": "classroom_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "schedule version id (defaults to the latest published version)",
+                        "name": "version_id",
                         "in": "query"
                     }
                 ],
@@ -580,8 +587,36 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/schedules/draft": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schedules"
+                ],
+                "summary": "View the unpublished draft timetable",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "week",
+                        "name": "week",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/schedules/export": {
             "get": {
+                "description": "Export the latest published timetable by default; pass version_id to export a historical version.",
                 "produces": [
                     "application/json"
                 ],
@@ -608,6 +643,12 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "week",
                         "name": "week",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "schedule version id",
+                        "name": "version_id",
                         "in": "query"
                     },
                     {
@@ -693,6 +734,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/schedules/publish": {
+            "post": {
+                "description": "Promote draft entries (all weeks by default, or the given weeks) into the live timetable. When the draft contains conflicts the response is 409 with a conflict list.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schedules"
+                ],
+                "summary": "Publish the draft timetable",
+                "parameters": [
+                    {
+                        "description": "publish options",
+                        "name": "input",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.PublishScheduleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/schedules/swap": {
             "post": {
                 "consumes": [
@@ -714,6 +794,101 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.SwapScheduleRequest"
                         }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/schedules/versions": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schedules"
+                ],
+                "summary": "List published timetable versions",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/schedules/versions/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schedules"
+                ],
+                "summary": "Get one published timetable version",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "version id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/schedules/versions/{id}/entries": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "schedules"
+                ],
+                "summary": "List timetable entries of one published version",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "version id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "week",
+                        "name": "week",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1368,6 +1543,21 @@ const docTemplate = `{
                 "week": {
                     "type": "integer",
                     "minimum": 1
+                }
+            }
+        },
+        "github_com_gbschedule_gbschedule_internal_dto.PublishScheduleRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "weeks": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
