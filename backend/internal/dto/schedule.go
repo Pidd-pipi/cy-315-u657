@@ -47,6 +47,45 @@ type ScheduleResponse struct {
 	ClassName     string `json:"class_name"`
 	CourseID      uint   `json:"course_id"`
 	CourseName    string `json:"course_name"`
+	Status        string `json:"status"`
+	VersionID     *uint  `json:"version_id,omitempty"`
+}
+
+// DraftResponse is the payload of GET /schedules/draft.
+type DraftResponse struct {
+	HasDraft  bool               `json:"has_draft"`
+	Week      *uint              `json:"week,omitempty"`
+	Total     int                `json:"total"`
+	Schedules []ScheduleResponse `json:"schedules"`
+}
+
+// PublishScheduleRequest optionally narrows a publish to selected weeks.
+type PublishScheduleRequest struct {
+	// Weeks is an explicit list of weeks. When omitted a single Week filter
+	// may be supplied via query parameter instead.
+	Weeks []uint `json:"weeks" binding:"omitempty,dive,gte=1"`
+	Note  string `json:"note" binding:"omitempty,max=255"`
+}
+
+// PublishScheduleResponse is the result of a successful publish.
+type PublishScheduleResponse struct {
+	VersionID    uint               `json:"version_id"`
+	Version      int                `json:"version"`
+	Weeks        []uint             `json:"weeks"`
+	Published    int64              `json:"published"`
+	Schedules    []ScheduleResponse `json:"schedules"`
+	PreviousNote string             `json:"previous_version_note,omitempty"`
+}
+
+// ScheduleVersionResponse describes one official timetable version.
+type ScheduleVersionResponse struct {
+	ID         uint   `json:"id"`
+	Version    int    `json:"version"`
+	Weeks      []uint `json:"weeks"`
+	WeekCount  int    `json:"week_count"`
+	EntryCount int    `json:"entry_count"`
+	Note       string `json:"note"`
+	CreatedAt  string `json:"created_at"`
 }
 
 // SwapScheduleRequest swaps time and classroom of two timetable entries.

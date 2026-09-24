@@ -82,6 +82,9 @@ func New(h Handlers, logger *slog.Logger) *gin.Engine {
 		{
 			schedules.GET("", h.Schedule.List)
 			schedules.POST("/generate", h.Schedule.Generate)
+			schedules.GET("/draft", h.Schedule.Draft)
+			schedules.POST("/publish", h.Schedule.Publish)
+			schedules.GET("/versions", h.Schedule.Versions)
 			schedules.GET("/conflicts", h.Schedule.Conflicts)
 			schedules.GET("/adjustments", h.Schedule.Adjustments)
 			schedules.GET("/export", h.Schedule.Export)

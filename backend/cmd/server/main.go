@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -105,11 +106,53 @@ func migrate(db *gorm.DB) error {
 		&model.Course{},
 		&model.TimeSlot{},
 		&model.Schedule{},
+		&model.ScheduleVersion{},
 		&model.AdjustmentLog{},
 	); err != nil {
 		return fmt.Errorf("auto migrate: %w", err)
 	}
+	if err := backfillLegacySchedules(db); err != nil {
+		return fmt.Errorf("backfill legacy schedules: %w", err)
+	}
 	return nil
+}
+
+// backfillLegacySchedules treats rows written before the draft/publish feature
+// (status/version_id added by AutoMigrate) as the first official version, so
+// existing deployments keep their current timetable queryable.
+func backfillLegacySchedules(db *gorm.DB) error {
+	var legacyCount int64
+	if err := db.Model(&model.Schedule{}).Where("version_id IS NULL").Count(&legacyCount).Error; err != nil {
+		return fmt.Errorf("count legacy schedules: %w", err)
+	}
+	if legacyCount == 0 {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		var version model.ScheduleVersion
+		err := tx.Where("version = ?", 1).First(&version).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			version = model.ScheduleVersion{Version: 1, Note: "initial version (pre-draft migration)"}
+			if err := tx.Create(&version).Error; err != nil {
+				return fmt.Errorf("create initial version: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("load initial version: %w", err)
+		}
+		var weekCount int64
+		if err := tx.Model(&model.Schedule{}).Where("version_id IS NULL").Distinct("week").Count(&weekCount).Error; err != nil {
+			return fmt.Errorf("count legacy weeks: %w", err)
+		}
+		if err := tx.Model(&model.ScheduleVersion{}).Where("id = ?", version.ID).
+			Updates(map[string]any{"entry_count": legacyCount, "week_count": weekCount}).Error; err != nil {
+			return fmt.Errorf("update initial version counts: %w", err)
+		}
+		if err := tx.Model(&model.Schedule{}).Where("version_id IS NULL").
+			Update("version_id", version.ID).Error; err != nil {
+			return fmt.Errorf("attach legacy schedules to version: %w", err)
+		}
+		return nil
+	})
 }
 
 func newApp(db *gorm.DB, logger *slog.Logger) (*gin.Engine, error) {
@@ -119,14 +162,16 @@ func newApp(db *gorm.DB, logger *slog.Logger) (*gin.Engine, error) {
 	courseRepo := repository.NewCourseRepository(db)
 	timeSlotRepo := repository.NewTimeSlotRepository(db)
 	scheduleRepo := repository.NewScheduleRepository(db)
+	versionRepo := repository.NewScheduleVersionRepository(db)
 	adjustmentRepo := repository.NewAdjustmentLogRepository(db)
+	uow := repository.NewUnitOfWork(db)
 
 	classroomService := service.NewClassroomService(classroomRepo, logger)
 	teacherService := service.NewTeacherService(teacherRepo, logger)
 	classService := service.NewClassService(classRepo, logger)
 	courseService := service.NewCourseService(courseRepo, logger)
 	timeSlotService := service.NewTimeSlotService(timeSlotRepo, logger)
-	scheduleService := service.NewScheduleService(scheduleRepo, classroomRepo, teacherRepo, classRepo, courseRepo, timeSlotRepo, adjustmentRepo, logger)
+	scheduleService := service.NewScheduleService(scheduleRepo, versionRepo, classroomRepo, teacherRepo, classRepo, courseRepo, timeSlotRepo, adjustmentRepo, uow, logger)
 
 	h := router.Handlers{
 		Classroom:  handler.NewClassroomHandler(classroomService, logger),

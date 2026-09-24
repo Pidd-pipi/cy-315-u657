@@ -3,12 +3,14 @@ package handler
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/gbschedule/gbschedule/internal/constants"
 	"github.com/gbschedule/gbschedule/internal/dto"
 	"github.com/gbschedule/gbschedule/internal/service"
 )
@@ -25,7 +27,7 @@ func NewScheduleHandler(service service.ScheduleService, logger *slog.Logger) *S
 }
 
 // Generate godoc
-// @Summary Generate a timetable
+// @Summary Generate a timetable into the pending draft
 // @Tags schedules
 // @Accept json
 // @Produce json
@@ -47,13 +49,14 @@ func (h *ScheduleHandler) Generate(c *gin.Context) {
 }
 
 // List godoc
-// @Summary List timetable entries
+// @Summary List official timetable entries (latest version by default)
 // @Tags schedules
 // @Produce json
 // @Param week query int false "week"
 // @Param class_id query int false "class id"
 // @Param teacher_id query int false "teacher id"
 // @Param classroom_id query int false "classroom id"
+// @Param version_id query int false "specific published version id"
 // @Success 200 {object} dto.Response
 // @Router /api/v1/schedules [get]
 func (h *ScheduleHandler) List(c *gin.Context) {
@@ -62,7 +65,12 @@ func (h *ScheduleHandler) List(c *gin.Context) {
 		BadRequest(c, err.Error())
 		return
 	}
-	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID)
+	versionID, err := parseOptionalUintQuery(c, "version_id")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID, versionID)
 	if err != nil {
 		Error(c, err)
 		return
@@ -70,8 +78,99 @@ func (h *ScheduleHandler) List(c *gin.Context) {
 	OK(c, items)
 }
 
+// Draft godoc
+// @Summary Inspect the pending draft timetable
+// @Tags schedules
+// @Produce json
+// @Param week query int false "filter by week"
+// @Success 200 {object} dto.Response
+// @Router /api/v1/schedules/draft [get]
+func (h *ScheduleHandler) Draft(c *gin.Context) {
+	week, err := parseOptionalUintQuery(c, "week")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.service.ListDraft(c.Request.Context(), week)
+	if err != nil {
+		Error(c, err)
+		return
+	}
+	OK(c, result)
+}
+
+// Publish godoc
+// @Summary Publish the pending draft into a new official version
+// @Tags schedules
+// @Accept json
+// @Produce json
+// @Param week query int false "publish only this week"
+// @Param input body dto.PublishScheduleRequest false "optional week list and note"
+// @Success 200 {object} dto.Response
+// @Failure 409 {object} dto.Response "draft contains conflicts"
+// @Router /api/v1/schedules/publish [post]
+func (h *ScheduleHandler) Publish(c *gin.Context) {
+	week, err := parseOptionalUintQuery(c, "week")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	var req dto.PublishScheduleRequest
+	// Body is optional when callers only use the week query parameter.
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			BadRequest(c, err.Error())
+			return
+		}
+	}
+	result, err := h.service.Publish(c.Request.Context(), &req, week)
+	if err != nil {
+		var conflictErr *service.DraftConflictError
+		if errors.As(err, &conflictErr) {
+			c.JSON(http.StatusConflict, dto.Response{
+				Code:    constants.CodeConflict,
+				Message: conflictErr.Error(),
+				Data:    gin.H{"conflicts": conflictErr.Conflicts},
+			})
+			return
+		}
+		if errors.Is(err, service.ErrNoDraft) {
+			c.JSON(http.StatusNotFound, dto.Response{
+				Code: constants.CodeNotFound, Message: err.Error(), Data: nil,
+			})
+			return
+		}
+		Error(c, err)
+		return
+	}
+	OK(c, result)
+}
+
+// Versions godoc
+// @Summary List official timetable versions
+// @Tags schedules
+// @Produce json
+// @Param page query int false "page"
+// @Param page_size query int false "page size"
+// @Success 200 {object} dto.Response
+// @Router /api/v1/schedules/versions [get]
+func (h *ScheduleHandler) Versions(c *gin.Context) {
+	var p dto.Pagination
+	if err := c.ShouldBindQuery(&p); err != nil {
+		BadRequest(c, "invalid pagination")
+		return
+	}
+	p.Normalize()
+	items, total, err := h.service.ListVersions(c.Request.Context(), p.Page, p.PageSize)
+	if err != nil {
+		Error(c, err)
+		return
+	}
+	OK(c, dto.PageData{Items: items, Total: total, Page: p.Page, PageSize: p.PageSize})
+}
+
 // Get godoc
-// @Summary Get one timetable entry
+// @Summary Get one official timetable entry
 // @Tags schedules
 // @Produce json
 // @Param id path int true "schedule id"
@@ -91,13 +190,19 @@ func (h *ScheduleHandler) Get(c *gin.Context) {
 }
 
 // Conflicts godoc
-// @Summary Detect conflicts in the current timetable
+// @Summary Detect conflicts in the draft (or the official timetable when no draft exists)
 // @Tags schedules
 // @Produce json
+// @Param week query int false "check only this week"
 // @Success 200 {object} dto.Response
 // @Router /api/v1/schedules/conflicts [get]
 func (h *ScheduleHandler) Conflicts(c *gin.Context) {
-	items, err := h.service.CheckConflicts(c.Request.Context())
+	week, err := parseOptionalUintQuery(c, "week")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	items, err := h.service.CheckConflicts(c.Request.Context(), week)
 	if err != nil {
 		Error(c, err)
 		return
@@ -106,7 +211,7 @@ func (h *ScheduleHandler) Conflicts(c *gin.Context) {
 }
 
 // Swap godoc
-// @Summary Swap two timetable entries
+// @Summary Swap two draft timetable entries
 // @Tags schedules
 // @Accept json
 // @Produce json
@@ -128,7 +233,7 @@ func (h *ScheduleHandler) Swap(c *gin.Context) {
 }
 
 // Move godoc
-// @Summary Move a timetable entry to a free slot
+// @Summary Move one draft timetable entry to a free slot
 // @Tags schedules
 // @Accept json
 // @Produce json
@@ -173,12 +278,13 @@ func (h *ScheduleHandler) Adjustments(c *gin.Context) {
 }
 
 // Export godoc
-// @Summary Export a timetable as JSON or CSV
+// @Summary Export the official timetable as JSON or CSV
 // @Tags schedules
 // @Produce json
 // @Param type query string true "class|teacher|classroom"
 // @Param id query int true "entity id"
 // @Param week query int false "week"
+// @Param version_id query int false "specific published version id"
 // @Param format query string false "json|csv"
 // @Success 200 {object} dto.Response
 // @Router /api/v1/schedules/export [get]
@@ -194,6 +300,11 @@ func (h *ScheduleHandler) Export(c *gin.Context) {
 		w := exportReq.Week
 		week = &w
 	}
+	versionID, err := parseOptionalUintQuery(c, "version_id")
+	if err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
 	var classID, teacherID, classroomID *uint
 	switch exportReq.Type {
 	case "class":
@@ -206,7 +317,7 @@ func (h *ScheduleHandler) Export(c *gin.Context) {
 		id := exportReq.ID
 		classroomID = &id
 	}
-	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID)
+	items, err := h.service.List(c.Request.Context(), week, classID, teacherID, classroomID, versionID)
 	if err != nil {
 		Error(c, err)
 		return
@@ -216,6 +327,20 @@ func (h *ScheduleHandler) Export(c *gin.Context) {
 		return
 	}
 	OK(c, items)
+}
+
+// parseOptionalUintQuery parses an optional positive uint query parameter.
+func parseOptionalUintQuery(c *gin.Context, key string) (*uint, error) {
+	v := c.Query(key)
+	if v == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || n == 0 {
+		return nil, errors.New("invalid query parameter " + key)
+	}
+	x := uint(n)
+	return &x, nil
 }
 
 func parseScheduleFilters(c *gin.Context) (*uint, *uint, *uint, *uint, error) {

@@ -392,6 +392,8 @@ func enrichSchedules(items []model.Schedule, slots map[uint]model.TimeSlot, clas
 			ClassName:     class.Name,
 			CourseID:      item.CourseID,
 			CourseName:    course.Name,
+			Status:        item.Status,
+			VersionID:     item.VersionID,
 		})
 	}
 	return out

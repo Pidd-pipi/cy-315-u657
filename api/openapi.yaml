@@ -1,6 +1,6 @@
 basePath: /
 definitions:
-  github_com_gbschedule_gbschedule_internal_dto.CourseRequirement:
+  dto.CourseRequirement:
     properties:
       class_id:
         type: integer
@@ -18,7 +18,7 @@ definitions:
     - course_id
     - weekly_periods
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.CreateClassRequest:
+  dto.CreateClassRequest:
     properties:
       grade:
         maxLength: 64
@@ -33,7 +33,7 @@ definitions:
     - name
     - student_count
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.CreateClassroomRequest:
+  dto.CreateClassroomRequest:
     properties:
       capacity:
         minimum: 1
@@ -53,7 +53,7 @@ definitions:
     - code
     - name
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.CreateCourseRequest:
+  dto.CreateCourseRequest:
     properties:
       code:
         maxLength: 64
@@ -72,7 +72,7 @@ definitions:
     - duration
     - name
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.CreateTeacherRequest:
+  dto.CreateTeacherRequest:
     properties:
       contact:
         maxLength: 128
@@ -95,7 +95,7 @@ definitions:
     - employee_no
     - name
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.CreateTimeSlotRequest:
+  dto.CreateTimeSlotRequest:
     properties:
       code:
         maxLength: 64
@@ -115,7 +115,7 @@ definitions:
     - name
     - start_time
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.GenerateScheduleRequest:
+  dto.GenerateScheduleRequest:
     properties:
       class_ids:
         items:
@@ -127,7 +127,7 @@ definitions:
         type: array
       courses:
         items:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.CourseRequirement'
+          $ref: '#/definitions/dto.CourseRequirement'
         minItems: 1
         type: array
       days_per_week:
@@ -155,7 +155,7 @@ definitions:
     - periods_per_day
     - weeks
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.MoveScheduleRequest:
+  dto.MoveScheduleRequest:
     properties:
       classroom_id:
         type: integer
@@ -177,7 +177,20 @@ definitions:
     - time_slot_id
     - week
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.Response:
+  dto.PublishScheduleRequest:
+    properties:
+      note:
+        maxLength: 255
+        type: string
+      weeks:
+        description: |-
+          Weeks is an explicit list of weeks. When omitted a single Week filter
+          may be supplied via query parameter instead.
+        items:
+          type: integer
+        type: array
+    type: object
+  dto.Response:
     properties:
       code:
         type: integer
@@ -185,7 +198,7 @@ definitions:
       message:
         type: string
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.SwapScheduleRequest:
+  dto.SwapScheduleRequest:
     properties:
       schedule_a_id:
         type: integer
@@ -195,7 +208,7 @@ definitions:
     - schedule_a_id
     - schedule_b_id
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.UpdateClassRequest:
+  dto.UpdateClassRequest:
     properties:
       grade:
         maxLength: 64
@@ -207,7 +220,7 @@ definitions:
         minimum: 1
         type: integer
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.UpdateClassroomRequest:
+  dto.UpdateClassroomRequest:
     properties:
       capacity:
         minimum: 1
@@ -223,7 +236,7 @@ definitions:
         maxLength: 128
         type: string
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.UpdateCourseRequest:
+  dto.UpdateCourseRequest:
     properties:
       code:
         maxLength: 64
@@ -238,7 +251,7 @@ definitions:
         maxLength: 128
         type: string
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.UpdateTeacherRequest:
+  dto.UpdateTeacherRequest:
     properties:
       contact:
         maxLength: 128
@@ -258,7 +271,7 @@ definitions:
           type: string
         type: array
     type: object
-  github_com_gbschedule_gbschedule_internal_dto.UpdateTimeSlotRequest:
+  dto.UpdateTimeSlotRequest:
     properties:
       code:
         maxLength: 64
@@ -296,7 +309,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: List classes
       tags:
       - classes
@@ -309,14 +322,14 @@ paths:
         name: class
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.CreateClassRequest'
+          $ref: '#/definitions/dto.CreateClassRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Create a class
       tags:
       - classes
@@ -334,7 +347,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Delete a class
       tags:
       - classes
@@ -351,7 +364,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get a class
       tags:
       - classes
@@ -369,14 +382,14 @@ paths:
         name: class
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.UpdateClassRequest'
+          $ref: '#/definitions/dto.UpdateClassRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Update a class
       tags:
       - classes
@@ -397,7 +410,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: List classrooms
       tags:
       - classrooms
@@ -410,14 +423,14 @@ paths:
         name: classroom
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.CreateClassroomRequest'
+          $ref: '#/definitions/dto.CreateClassroomRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Create a classroom
       tags:
       - classrooms
@@ -435,7 +448,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Delete a classroom
       tags:
       - classrooms
@@ -452,7 +465,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get a classroom
       tags:
       - classrooms
@@ -470,14 +483,14 @@ paths:
         name: classroom
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.UpdateClassroomRequest'
+          $ref: '#/definitions/dto.UpdateClassroomRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Update a classroom
       tags:
       - classrooms
@@ -498,7 +511,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: List courses
       tags:
       - courses
@@ -511,14 +524,14 @@ paths:
         name: course
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.CreateCourseRequest'
+          $ref: '#/definitions/dto.CreateCourseRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Create a course
       tags:
       - courses
@@ -536,7 +549,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Delete a course
       tags:
       - courses
@@ -553,7 +566,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get a course
       tags:
       - courses
@@ -571,14 +584,14 @@ paths:
         name: course
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.UpdateCourseRequest'
+          $ref: '#/definitions/dto.UpdateCourseRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Update a course
       tags:
       - courses
@@ -601,14 +614,18 @@ paths:
         in: query
         name: classroom_id
         type: integer
+      - description: specific published version id
+        in: query
+        name: version_id
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
-      summary: List timetable entries
+            $ref: '#/definitions/dto.Response'
+      summary: List official timetable entries (latest version by default)
       tags:
       - schedules
   /api/v1/schedules/{id}:
@@ -625,8 +642,8 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
-      summary: Get one timetable entry
+            $ref: '#/definitions/dto.Response'
+      summary: Get one official timetable entry
       tags:
       - schedules
   /api/v1/schedules/adjustments:
@@ -646,20 +663,43 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: List adjustment history
       tags:
       - schedules
   /api/v1/schedules/conflicts:
     get:
+      parameters:
+      - description: check only this week
+        in: query
+        name: week
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
-      summary: Detect conflicts in the current timetable
+            $ref: '#/definitions/dto.Response'
+      summary: Detect conflicts in the draft (or the official timetable when no draft
+        exists)
+      tags:
+      - schedules
+  /api/v1/schedules/draft:
+    get:
+      parameters:
+      - description: filter by week
+        in: query
+        name: week
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.Response'
+      summary: Inspect the pending draft timetable
       tags:
       - schedules
   /api/v1/schedules/export:
@@ -679,6 +719,10 @@ paths:
         in: query
         name: week
         type: integer
+      - description: specific published version id
+        in: query
+        name: version_id
+        type: integer
       - description: json|csv
         in: query
         name: format
@@ -689,8 +733,8 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
-      summary: Export a timetable as JSON or CSV
+            $ref: '#/definitions/dto.Response'
+      summary: Export the official timetable as JSON or CSV
       tags:
       - schedules
   /api/v1/schedules/generate:
@@ -703,15 +747,15 @@ paths:
         name: input
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.GenerateScheduleRequest'
+          $ref: '#/definitions/dto.GenerateScheduleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
-      summary: Generate a timetable
+            $ref: '#/definitions/dto.Response'
+      summary: Generate a timetable into the pending draft
       tags:
       - schedules
   /api/v1/schedules/move:
@@ -724,15 +768,43 @@ paths:
         name: input
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.MoveScheduleRequest'
+          $ref: '#/definitions/dto.MoveScheduleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
-      summary: Move a timetable entry to a free slot
+            $ref: '#/definitions/dto.Response'
+      summary: Move one draft timetable entry to a free slot
+      tags:
+      - schedules
+  /api/v1/schedules/publish:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: publish only this week
+        in: query
+        name: week
+        type: integer
+      - description: optional week list and note
+        in: body
+        name: input
+        schema:
+          $ref: '#/definitions/dto.PublishScheduleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.Response'
+        "409":
+          description: draft contains conflicts
+          schema:
+            $ref: '#/definitions/dto.Response'
+      summary: Publish the pending draft into a new official version
       tags:
       - schedules
   /api/v1/schedules/swap:
@@ -745,15 +817,36 @@ paths:
         name: input
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.SwapScheduleRequest'
+          $ref: '#/definitions/dto.SwapScheduleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
-      summary: Swap two timetable entries
+            $ref: '#/definitions/dto.Response'
+      summary: Swap two draft timetable entries
+      tags:
+      - schedules
+  /api/v1/schedules/versions:
+    get:
+      parameters:
+      - description: page
+        in: query
+        name: page
+        type: integer
+      - description: page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.Response'
+      summary: List official timetable versions
       tags:
       - schedules
   /api/v1/statistics/classrooms:
@@ -764,7 +857,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get classroom utilization statistics
       tags:
       - statistics
@@ -776,7 +869,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get course density heatmap data
       tags:
       - statistics
@@ -788,7 +881,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get teacher workload statistics
       tags:
       - statistics
@@ -809,7 +902,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: List teachers
       tags:
       - teachers
@@ -822,14 +915,14 @@ paths:
         name: teacher
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.CreateTeacherRequest'
+          $ref: '#/definitions/dto.CreateTeacherRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Create a teacher
       tags:
       - teachers
@@ -847,7 +940,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Delete a teacher
       tags:
       - teachers
@@ -864,7 +957,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get a teacher
       tags:
       - teachers
@@ -882,14 +975,14 @@ paths:
         name: teacher
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.UpdateTeacherRequest'
+          $ref: '#/definitions/dto.UpdateTeacherRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Update a teacher
       tags:
       - teachers
@@ -910,7 +1003,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: List time-slots
       tags:
       - time-slots
@@ -923,14 +1016,14 @@ paths:
         name: time_slot
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.CreateTimeSlotRequest'
+          $ref: '#/definitions/dto.CreateTimeSlotRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Create a time slot
       tags:
       - time-slots
@@ -948,7 +1041,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Delete a time slot
       tags:
       - time-slots
@@ -965,7 +1058,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Get a time slot
       tags:
       - time-slots
@@ -983,14 +1076,14 @@ paths:
         name: time_slot
         required: true
         schema:
-          $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.UpdateTimeSlotRequest'
+          $ref: '#/definitions/dto.UpdateTimeSlotRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_gbschedule_gbschedule_internal_dto.Response'
+            $ref: '#/definitions/dto.Response'
       summary: Update a time slot
       tags:
       - time-slots
